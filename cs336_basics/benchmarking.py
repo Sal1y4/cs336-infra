@@ -88,10 +88,15 @@ def run_benchmark(
     peak_tflops=None,      # 用本机实测 matmul 峰值算 MFU；不给就不算
     max_l2_norm=1.0,
     seed=0,
+    memory_fraction=None,  # 限制 PyTorch 可用显存比例，超出直接 OOM
 ):
     device = torch.device(device)
     torch.manual_seed(seed)
     if device.type == "cuda":
+        # Windows/WSL 驱动默认会在显存不够时溢出到共享系统内存（sysmem fallback），
+        # 程序不报 OOM，但会慢 10 倍以上。给一个上限，让超显存的配置直接报 OOM。
+        if memory_fraction is not None:
+            torch.cuda.set_per_process_memory_fraction(memory_fraction, device)
         torch.backends.cuda.matmul.allow_tf32 = tf32
         torch.backends.cudnn.allow_tf32 = tf32
 

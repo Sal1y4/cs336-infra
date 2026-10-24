@@ -37,6 +37,11 @@ def parse_args():
     parser.add_argument("--warmup-steps", type=int, default=5)
     parser.add_argument("--measure-steps", type=int, default=10)
     parser.add_argument("--peak-tflops", type=float, help="本机实测的 matmul 峰值，用来算 MFU")
+    parser.add_argument(
+        "--memory-fraction",
+        type=float,
+        help="PyTorch 可用显存上限（占总显存比例），防止 WSL 溢出到系统内存，例如 0.9",
+    )
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--out", help="把每组结果追加到这个 JSONL 文件")
     return parser.parse_args()
@@ -71,6 +76,7 @@ def main():
                 measure_steps=args.measure_steps,
                 device=args.device,
                 peak_tflops=args.peak_tflops,
+                memory_fraction=args.memory_fraction,
             )
             if result.oom:
                 print(f"{context_length:<4} {batch_size:<6} OOM")
