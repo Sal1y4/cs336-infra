@@ -28,7 +28,7 @@ def clip_grad_norm_(parameters, max_l2_norm):
         if parameter.grad is not None
     ]
     if not parameters:
-        return
+        return None
     total_norm_squared = sum(
         parameter.grad.pow(2).sum()
         for parameter in parameters
@@ -39,3 +39,5 @@ def clip_grad_norm_(parameters, max_l2_norm):
 
         for parameter in parameters:
             parameter.grad.mul_(scale)
+
+    return total_norm
