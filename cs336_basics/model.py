@@ -58,17 +58,22 @@ def rope(in_query_or_key, token_positions, theta):
 
     assert d_k % 2 == 0
 
+    # 角度和旋转都在 fp32 里算：bf16 只有 8 位有效位，位置 257 起就不能精确表示，
+    # 角度误差会达到弧度级。最后再转回输入的 dtype。
+    in_dtype = in_query_or_key.dtype
+    in_query_or_key = in_query_or_key.float()
+
     frequency_indices = torch.arange(
         0,
         d_k,
         2,
         device=in_query_or_key.device,
-        dtype=in_query_or_key.dtype,
+        dtype=torch.float32,
     )
 
     inv_freq = 1.0 / (theta ** (frequency_indices / d_k))
 
-    angles = token_positions.to(in_query_or_key.dtype).unsqueeze(-1) * inv_freq
+    angles = token_positions.to(torch.float32).unsqueeze(-1) * inv_freq
 
     while angles.ndim < in_query_or_key.ndim:
         angles = angles.unsqueeze(-3)
@@ -82,7 +87,7 @@ def rope(in_query_or_key, token_positions, theta):
     rotated_even = even * cos_angles - odd * sin_angles
     rotated_odd = even * sin_angles + odd * cos_angles
 
-    return torch.stack((rotated_even, rotated_odd), dim=-1).flatten(-2, -1)
+    return torch.stack((rotated_even, rotated_odd), dim=-1).flatten(-2, -1).to(in_dtype)
 
 class MultiHeadSelfAttention(nn.Module):
     def __init__(self, d_model, num_heads, theta=None):
@@ -147,10 +152,14 @@ class RMSNorm(nn.Module):
         self.eps = eps
 
     def forward(self, in_features):
+        # 讲义 3.4.1：先 upcast 到 fp32 再求平方均值，fp16 下 x^2 很容易溢出。
+        in_dtype = in_features.dtype
+        in_features = in_features.float()
+
         mean_square = in_features.pow(2).mean(dim=-1, keepdim=True)
         rms = torch.sqrt(mean_square + self.eps)
 
-        return (in_features / rms) * self.weight
+        return ((in_features / rms) * self.weight).to(in_dtype)
     
 
 class TransformerBlock(nn.Module):
