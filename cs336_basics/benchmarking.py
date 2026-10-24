@@ -91,6 +91,9 @@ def run_benchmark(
     memory_fraction=None,  # 限制 PyTorch 可用显存比例，超出直接 OOM
 ):
     device = torch.device(device)
+    if device.type == "cuda" and device.index is None:
+        # set_per_process_memory_fraction 等接口要求带编号的设备，"cuda" 不行。
+        device = torch.device("cuda", torch.cuda.current_device())
     torch.manual_seed(seed)
     if device.type == "cuda":
         # Windows/WSL 驱动默认会在显存不够时溢出到共享系统内存（sysmem fallback），
