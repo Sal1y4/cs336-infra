@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 
@@ -90,10 +91,12 @@ def rope(in_query_or_key, token_positions, theta):
     return torch.stack((rotated_even, rotated_odd), dim=-1).flatten(-2, -1).to(in_dtype)
 
 class MultiHeadSelfAttention(nn.Module):
-    def __init__(self, d_model, num_heads, theta=None):
+    def __init__(self, d_model, num_heads, theta=None, attention_impl="naive"):
         super().__init__()
 
         assert d_model % num_heads == 0
+        assert attention_impl in ("naive", "sdpa")
+        self.attention_impl = attention_impl
 
         self.num_heads = num_heads
         self.d_head = d_model // num_heads
@@ -128,16 +131,20 @@ class MultiHeadSelfAttention(nn.Module):
             Q = rope(Q, token_positions, self.theta)
             K = rope(K, token_positions, self.theta)
 
-        mask = torch.tril(
-            torch.ones(
-                sequence_length,
-                sequence_length,
-                dtype=torch.bool,
-                device=in_features.device,
+        if self.attention_impl == "sdpa":
+            # PyTorch 融合内核（Flash / memory-efficient），不物化 T×T 分数矩阵
+            attention_output = F.scaled_dot_product_attention(Q, K, V, is_causal=True)
+        else:
+            mask = torch.tril(
+                torch.ones(
+                    sequence_length,
+                    sequence_length,
+                    dtype=torch.bool,
+                    device=in_features.device,
+                )
             )
-        )
 
-        attention_output = scaled_dot_product_attention(Q, K, V, mask)
+            attention_output = scaled_dot_product_attention(Q, K, V, mask)
 
         attention_output = attention_output.transpose(-3, -2)
         attention_output = attention_output.flatten(-2, -1)
@@ -163,12 +170,12 @@ class RMSNorm(nn.Module):
     
 
 class TransformerBlock(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, theta):
+    def __init__(self, d_model, num_heads, d_ff, theta, attention_impl="naive"):
         super().__init__()
     
     
         self.ln1 = RMSNorm(d_model)
-        self.attn = MultiHeadSelfAttention(d_model, num_heads, theta)
+        self.attn = MultiHeadSelfAttention(d_model, num_heads, theta, attention_impl)
         
         self.ln2 = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff)
@@ -183,7 +190,9 @@ class TransformerBlock(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta):
+    def __init__(
+        self, vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta, attention_impl="naive"
+    ):
         super().__init__()
 
         self.context_length = context_length
@@ -191,7 +200,7 @@ class TransformerLM(nn.Module):
         self.token_embeddings = Embedding(vocab_size, d_model)
 
         self.layers = nn.ModuleList([
-            TransformerBlock(d_model, num_heads, d_ff, rope_theta)
+            TransformerBlock(d_model, num_heads, d_ff, rope_theta, attention_impl)
             for _ in range(num_layers)
         ])
 

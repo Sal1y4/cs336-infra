@@ -10,6 +10,7 @@ from dataclasses import asdict
 
 import torch
 
+from cs336_basics.ablations import ATTENTION_IMPLS, LOSS_IMPLS, OPTIMIZER_IMPLS
 from cs336_basics.benchmarking import (
     PRESETS,
     ModelConfig,
@@ -34,6 +35,10 @@ def parse_args():
     parser.add_argument("--mode", choices=["forward", "forward_backward", "train"], default="train")
     parser.add_argument("--dtype", choices=["fp32", "bf16"], default="fp32")
     parser.add_argument("--tf32", action="store_true")
+    parser.add_argument("--attention-impl", choices=ATTENTION_IMPLS, default="naive")
+    parser.add_argument("--loss-impl", choices=LOSS_IMPLS, default="naive")
+    parser.add_argument("--optimizer-impl", choices=OPTIMIZER_IMPLS, default="naive")
+    parser.add_argument("--compile", action="store_true")
     parser.add_argument("--warmup-steps", type=int, default=5)
     parser.add_argument("--measure-steps", type=int, default=10)
     parser.add_argument("--peak-tflops", type=float, help="本机实测的 matmul 峰值，用来算 MFU")
@@ -77,6 +82,10 @@ def main():
                 device=args.device,
                 peak_tflops=args.peak_tflops,
                 memory_fraction=args.memory_fraction,
+                attention_impl=args.attention_impl,
+                loss_impl=args.loss_impl,
+                optimizer_impl=args.optimizer_impl,
+                compile=args.compile,
             )
             if result.oom:
                 print(f"{context_length:<4} {batch_size:<6} OOM")
@@ -90,7 +99,17 @@ def main():
             if args.out:
                 append_jsonl(
                     args.out,
-                    {"preset": args.preset, "num_params": num_params, **asdict(config), **asdict(result), **env},
+                    {
+                        "preset": args.preset,
+                        "num_params": num_params,
+                        "attention_impl": args.attention_impl,
+                        "loss_impl": args.loss_impl,
+                        "optimizer_impl": args.optimizer_impl,
+                        "compile": args.compile,
+                        **asdict(config),
+                        **asdict(result),
+                        **env,
+                    },
                 )
 
 

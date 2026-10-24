@@ -7,10 +7,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from cs336_basics.ablations import build_optimizer, get_loss_fn
 from cs336_basics.data import get_batch
 from cs336_basics.model import TransformerLM
 from cs336_basics.nn_utils import clip_grad_norm_, cross_entropy
-from cs336_basics.optimizers import AdamW, get_lr_cosine_schedule
+from cs336_basics.optimizers import get_lr_cosine_schedule
 
 
 @dataclass
@@ -42,6 +43,11 @@ class TrainConfig:
     tf32: bool = False
     device: str = "cuda"
     seed: int = 0
+    # 消融开关（见 cs336_basics/ablations.py），默认都是自实现版本
+    attention_impl: str = "naive"  # "naive" | "sdpa"
+    loss_impl: str = "naive"  # "naive" | "torch"
+    optimizer_impl: str = "naive"  # "naive" | "torch_foreach" | "torch_fused"
+    compile: bool = False
     # 评估、日志、checkpoint（单位都是 step）
     eval_interval: int = 250
     eval_batches: int = 20
@@ -65,6 +71,7 @@ class TrainConfig:
             num_heads=self.num_heads,
             d_ff=self.d_ff,
             rope_theta=self.rope_theta,
+            attention_impl=self.attention_impl,
         )
 
 
@@ -135,9 +142,10 @@ def train(config, resume_from=None, max_steps_this_run=None):
     val_tokens = load_tokens(config.val_data)
     val_starts = fixed_val_starts(len(val_tokens), config.context_length, config.eval_batches * config.batch_size, seed=1234)
 
-    model = TransformerLM(**config.model_kwargs()).to(device)
-    optimizer = AdamW(
-        model.parameters(),
+    raw_model = TransformerLM(**config.model_kwargs()).to(device)
+    optimizer = build_optimizer(
+        config.optimizer_impl,
+        raw_model.parameters(),
         lr=config.max_lr,
         betas=(config.beta1, config.beta2),
         eps=config.eps,
@@ -146,7 +154,10 @@ def train(config, resume_from=None, max_steps_this_run=None):
 
     step = 0
     if resume_from is not None:
-        step = load_training_checkpoint(resume_from, model, optimizer)
+        step = load_training_checkpoint(resume_from, raw_model, optimizer)
+    # checkpoint 始终存未编译的模型，state_dict 的 key 才不会带 "_orig_mod." 前缀
+    model = torch.compile(raw_model) if config.compile else raw_model
+    loss_fn = get_loss_fn(config.loss_impl)
 
     if config.dtype == "bf16":
         autocast = torch.autocast(device_type=device.type, dtype=torch.bfloat16)
@@ -176,7 +187,7 @@ def train(config, resume_from=None, max_steps_this_run=None):
 
         x, y = get_batch(train_tokens, config.batch_size, config.context_length, device)
         with autocast:
-            loss = cross_entropy(model(x), y)
+            loss = loss_fn(model(x), y)
         loss.backward()
         grad_norm = clip_grad_norm_(model.parameters(), config.max_grad_norm)
         optimizer.step()
@@ -205,6 +216,6 @@ def train(config, resume_from=None, max_steps_this_run=None):
             window_steps = 0
 
         if step % config.checkpoint_interval == 0 or step == end_step:
-            save_training_checkpoint(out_dir / "checkpoint.pt", model, optimizer, step, config)
+            save_training_checkpoint(out_dir / "checkpoint.pt", raw_model, optimizer, step, config)
 
     return history
