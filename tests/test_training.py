@@ -95,3 +95,18 @@ def test_split_into_chunks_preserves_text_and_encoding():
 def test_bf16_training_runs_on_cpu(tmp_path):
     history = train(_tiny_config(tmp_path, dtype="bf16", max_steps=10, eval_interval=10))
     assert torch.isfinite(torch.tensor(history[-1]["val_loss"]))
+
+
+def test_training_with_ablation_switches_matches_naive(tmp_path):
+    # 开关只换实现、不换数学：前几步的 loss 应与自实现版本几乎一致。
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    common = dict(max_steps=10, log_interval=1, eval_interval=1000)
+    naive = train(_tiny_config(tmp_path / "a", **common))
+    swapped = train(
+        _tiny_config(
+            tmp_path / "b", attention_impl="sdpa", loss_impl="torch", optimizer_impl="torch_foreach", **common
+        )
+    )
+    for a, b in zip(naive, swapped):
+        assert abs(a["train_loss"] - b["train_loss"]) < 1e-3

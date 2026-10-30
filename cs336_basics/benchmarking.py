@@ -7,9 +7,9 @@ from dataclasses import asdict, dataclass
 
 import torch
 
+from cs336_basics.ablations import build_optimizer, get_loss_fn
 from cs336_basics.model import TransformerLM
-from cs336_basics.nn_utils import cross_entropy, clip_grad_norm_
-from cs336_basics.optimizers import AdamW
+from cs336_basics.nn_utils import clip_grad_norm_
 
 
 # 讲义 TinyStories 配置（7.2.1）和 Assignment 2 表 1 的 small 配置。
@@ -89,6 +89,10 @@ def run_benchmark(
     max_l2_norm=1.0,
     seed=0,
     memory_fraction=None,  # 限制 PyTorch 可用显存比例，超出直接 OOM
+    attention_impl="naive",
+    loss_impl="naive",
+    optimizer_impl="naive",
+    compile=False,
 ):
     device = torch.device(device)
     if device.type == "cuda" and device.index is None:
@@ -107,8 +111,12 @@ def run_benchmark(
 
     model = optimizer = None
     try:
-        model = TransformerLM(**asdict(config)).to(device)
-        optimizer = AdamW(model.parameters(), lr=1e-3)
+        model = TransformerLM(**asdict(config), attention_impl=attention_impl).to(device)
+        optimizer = build_optimizer(optimizer_impl, model.parameters(), lr=1e-3)
+        loss_fn = get_loss_fn(loss_impl)
+        if compile:
+            # 编译发生在第一次前向，会落在 warmup 里，不计入测量
+            model = torch.compile(model)
 
         # 随机数据就够了：这里只测速度和显存，不看 loss。
         x = torch.randint(0, config.vocab_size, (batch_size, config.context_length), device=device)
@@ -125,7 +133,7 @@ def run_benchmark(
             start = timeit.default_timer()
             with autocast:
                 logits = model(x)
-                loss = cross_entropy(logits, y) if mode != "forward" else None
+                loss = loss_fn(logits, y) if mode != "forward" else None
             _sync(device)
             times["forward"] = timeit.default_timer() - start
 
