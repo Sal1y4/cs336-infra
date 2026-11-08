@@ -4,8 +4,8 @@ Self-study of [Stanford CS336](https://stanford-cs336.github.io/spring2025/) Ass
 
 ## At a glance
 
-- **Training step 352.6 ms to 85.2 ms (4.1x throughput)** by stacking TF32, bf16 autocast, SDPA, fused cross-entropy, fused AdamW and `torch.compile`; peak memory 3.49 GiB to 1.83 GiB. Each step is ablated separately (tables below).
-- **Same model quality:** 5,000-step runs on TinyStories with 2 seeds; final validation loss matches the fp32 baseline within 0.001 at every 1,000-step checkpoint.
+- **Training step 352.6 ms to 85.2 ms (4.1x throughput)** by stacking TF32, bf16 autocast, SDPA, PyTorch cross-entropy, fused AdamW and `torch.compile`; peak memory 3.49 GiB to 1.83 GiB. Each step is ablated separately (tables below).
+- **Same model quality:** 5,000-step runs on TinyStories with 2 seeds; with the same seed, validation loss matches the fp32 baseline within 0.001 at every 1,000-step checkpoint.
 - **Found and fixed a bf16 bug:** RoPE angles computed in bf16 had a max error of 1.20 at T=256; they are now computed in fp32, with tests in `tests/test_mixed_precision.py`.
 - **Honest limits:** part of the end-to-end speedup comes from different SM clocks (the GPU sits at its 80 W power cap; clocks are recorded with every result), and only 2 seeds were run.
 
