@@ -1,6 +1,6 @@
 import gc
 import json
-import platform
+import math
 import timeit
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
@@ -10,6 +10,7 @@ import torch
 from cs336_basics.ablations import build_optimizer, get_loss_fn
 from cs336_basics.model import TransformerLM
 from cs336_basics.nn_utils import clip_grad_norm_
+from cs336_basics.runinfo import gpu_snapshot, run_metadata
 
 
 # 讲义 TinyStories 配置（7.2.1）和 Assignment 2 表 1 的 small 配置。
@@ -58,11 +59,16 @@ class BenchmarkResult:
     optimizer_ms: float | None = None
     step_ms: float | None = None
     step_ms_std: float | None = None
+    step_ms_p50: float | None = None
+    step_ms_p99: float | None = None
     tokens_per_second: float | None = None
     achieved_tflops: float | None = None
     mfu: float | None = None
     peak_allocated_gib: float | None = None
     peak_reserved_gib: float | None = None
+    # 测量开始前和结束后各取一次 nvidia-smi：时钟或温度在测量期间变了，结果就要打折看。
+    gpu_before: dict | None = None
+    gpu_after: dict | None = None
 
 
 def _sync(device):
@@ -74,6 +80,14 @@ def _mean_std(values):
     mean = sum(values) / len(values)
     variance = sum((value - mean) ** 2 for value in values) / len(values)
     return mean, variance ** 0.5
+
+
+def percentile(values, q):
+    # 最近秩法：排序后取第 ceil(q/100 * n) 个。样本少时 P99 就是最大值，
+    # 所以想看长尾要把 measure_steps 设到 100 以上。
+    ordered = sorted(values)
+    rank = max(1, math.ceil(q / 100 * len(ordered)))
+    return ordered[rank - 1]
 
 
 def run_benchmark(
@@ -166,8 +180,12 @@ def run_benchmark(
 
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats(device)
+                result.gpu_before = gpu_snapshot(device.index)
 
             records = [one_step() for _ in range(measure_steps)]
+
+            if device.type == "cuda":
+                result.gpu_after = gpu_snapshot(device.index)
 
         def phase_ms(name):
             if name not in records[0]:
@@ -182,6 +200,8 @@ def run_benchmark(
         result.optimizer_ms = phase_ms("optimizer")
         result.step_ms = 1000 * step_mean
         result.step_ms_std = 1000 * step_std
+        result.step_ms_p50 = 1000 * percentile(step_seconds, 50)
+        result.step_ms_p99 = 1000 * percentile(step_seconds, 99)
         tokens = batch_size * config.context_length
         result.tokens_per_second = tokens / step_mean
 
@@ -206,15 +226,8 @@ def run_benchmark(
 
 
 def environment_info(device):
-    info = {
-        "torch": torch.__version__,
-        "cuda": torch.version.cuda,
-        "python": platform.python_version(),
-        "device": str(device),
-    }
-    if torch.device(device).type == "cuda":
-        info["gpu"] = torch.cuda.get_device_name(device)
-    return info
+    # 保留旧名字；内容见 cs336_basics/runinfo.py
+    return run_metadata(device)
 
 
 def append_jsonl(path, record):

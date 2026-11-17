@@ -12,6 +12,7 @@ from cs336_basics.data import get_batch
 from cs336_basics.model import TransformerLM
 from cs336_basics.nn_utils import clip_grad_norm_, cross_entropy
 from cs336_basics.optimizers import get_lr_cosine_schedule
+from cs336_basics.runinfo import run_metadata
 
 
 @dataclass
@@ -132,6 +133,9 @@ def train(config, resume_from=None, max_steps_this_run=None):
     out_dir = Path(config.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "config.json").write_text(json.dumps(asdict(config), indent=2))
+    # 每次启动（包括续训）追加一行环境记录：commit、版本、GPU 时钟和温度。
+    with open(out_dir / "run_meta.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps({"resume_from": None if resume_from is None else str(resume_from), **run_metadata(device)}) + "\n")
 
     torch.manual_seed(config.seed)
     if device.type == "cuda":

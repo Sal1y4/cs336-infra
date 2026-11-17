@@ -8,7 +8,12 @@
 import argparse
 from dataclasses import asdict
 
+import sys
+from pathlib import Path
+
 import torch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 直接用 python 运行脚本时也能找到 cs336_basics
 
 from cs336_basics.ablations import ATTENTION_IMPLS, LOSS_IMPLS, OPTIMIZER_IMPLS
 from cs336_basics.benchmarking import (
@@ -65,7 +70,7 @@ def main():
 
     env = environment_info(args.device)
     print(env)
-    print("ctx  batch  fwd_ms  bwd_ms  opt_ms  step_ms(±std)  tok/s  TFLOP/s  MFU  peak_alloc_GiB")
+    print("ctx  batch  fwd_ms  bwd_ms  opt_ms  step_ms(±std)  p50/p99  tok/s  TFLOP/s  MFU  peak_alloc_GiB  clock_MHz")
 
     for context_length in args.context_length:
         config = ModelConfig(context_length=context_length, **model_args)
@@ -93,8 +98,10 @@ def main():
                 print(
                     f"{context_length:<4} {batch_size:<6} {fmt(result.forward_ms):>6}  {fmt(result.backward_ms):>6}  "
                     f"{fmt(result.optimizer_ms):>6}  {fmt(result.step_ms)}(±{fmt(result.step_ms_std)})  "
+                    f"{fmt(result.step_ms_p50)}/{fmt(result.step_ms_p99)}  "
                     f"{fmt(result.tokens_per_second, 0)}  {fmt(result.achieved_tflops, 2)}  "
-                    f"{fmt(result.mfu, 3)}  {fmt(result.peak_allocated_gib, 2)}"
+                    f"{fmt(result.mfu, 3)}  {fmt(result.peak_allocated_gib, 2)}  "
+                    f"{fmt((result.gpu_before or {}).get('clocks.sm'), 0)}->{fmt((result.gpu_after or {}).get('clocks.sm'), 0)}"
                 )
             if args.out:
                 append_jsonl(

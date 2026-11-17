@@ -1,0 +1,18 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cpu-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Lint
+        run: uv run ruff check cs336_basics experiments tests --exclude cs336_basics/bpe.py --exclude experiments/train_tiny.py  # 这两个是原始作业代码，保持原样
+      - name: Unit tests (CPU only; GPU measurements run on the laptop)
+        run: uv run pytest -q
